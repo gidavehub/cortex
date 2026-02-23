@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Plus, Search, Filter, CheckCircle2, Clock, Calendar, Layers, TrendingUp, Target, MoreHorizontal, Trash2, Edit } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
@@ -18,6 +19,7 @@ const SCOPE_CONFIG = {
     week: { label: 'Weekly', icon: Layers, color: 'indigo' },
     month: { label: 'Monthly', icon: Calendar, color: 'purple' },
     year: { label: 'Yearly', icon: TrendingUp, color: 'rose' },
+    client: { label: 'Client', icon: Target, color: 'emerald' },
 };
 
 type FilterScope = 'all' | TaskScope;
@@ -72,6 +74,7 @@ export default function TasksPage() {
         week: filteredTasks.filter(t => t.scope === 'week'),
         month: filteredTasks.filter(t => t.scope === 'month'),
         year: filteredTasks.filter(t => t.scope === 'year'),
+        client: filteredTasks.filter(t => t.scope === 'client'),
     };
 
     const handleSaveTask = async (input: any) => {
@@ -254,7 +257,7 @@ export default function TasksPage() {
                                             index={idx}
                                             onContextMenu={handleContextMenu}
                                             onToggle={handleToggleStatus}
-                                            onClick={() => {
+                                            onEdit={() => {
                                                 setSelectedTask(task);
                                                 setShowModal(true);
                                             }}
@@ -275,7 +278,7 @@ export default function TasksPage() {
                             index={idx}
                             onContextMenu={handleContextMenu}
                             onToggle={handleToggleStatus}
-                            onClick={() => {
+                            onEdit={() => {
                                 setSelectedTask(task);
                                 setShowModal(true);
                             }}
@@ -349,16 +352,17 @@ function TaskRow({
     index,
     onContextMenu,
     onToggle,
-    onClick
+    onEdit
 }: {
     task: Task;
     index: number;
     onContextMenu: (e: React.MouseEvent, task: Task) => void;
     onToggle: (task: Task) => void;
-    onClick: () => void;
+    onEdit: () => void;
 }) {
     const config = SCOPE_CONFIG[task.scope];
     const Icon = config.icon;
+    const router = useRouter();
 
     return (
         <motion.div
@@ -369,7 +373,7 @@ function TaskRow({
                 "group flex items-center gap-4 p-4 bg-white rounded-2xl border border-gray-100 hover:border-gray-200 hover:shadow-md transition-all cursor-pointer",
                 task.status === 'done' && "opacity-60"
             )}
-            onClick={onClick}
+            onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
             onContextMenu={(e) => onContextMenu(e, task)}
         >
             {/* Checkbox */}
@@ -434,11 +438,26 @@ function TaskRow({
             )}
 
             {/* Actions */}
-            <Link href={`/dashboard/tasks/${task.id}`} onClick={(e) => e.stopPropagation()}>
-                <button className="p-2 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-100 transition-all">
-                    <MoreHorizontal className="w-4 h-4 text-gray-400" />
-                </button>
-            </Link>
+            <button
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit();
+                }}
+                className="p-2 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-100 transition-all text-gray-400 hover:text-blue-600"
+                title="Edit Task"
+            >
+                <Edit className="w-4 h-4" />
+            </button>
+            <button
+                className="p-2 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-gray-100 transition-all"
+                title="View Details"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    router.push(`/dashboard/tasks/${task.id}`);
+                }}
+            >
+                <MoreHorizontal className="w-4 h-4 text-gray-400" />
+            </button>
         </motion.div>
     );
 }

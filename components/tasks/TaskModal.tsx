@@ -308,8 +308,8 @@ export function TaskModal({
                                 {/* Scope */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">Scope</label>
-                                    <div className="flex gap-2">
-                                        {(['day', 'week', 'month', 'year'] as const).map((s) => (
+                                    <div className="flex gap-2 flex-wrap">
+                                        {(['day', 'week', 'month', 'year', 'client'] as const).map((s) => (
                                             <button
                                                 key={s}
                                                 onClick={() => setScope(s)}

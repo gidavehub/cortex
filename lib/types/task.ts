@@ -1,6 +1,6 @@
 // Task Types for Cortex Hierarchical Task System
 
-export type TaskScope = 'day' | 'week' | 'month' | 'year';
+export type TaskScope = 'day' | 'week' | 'month' | 'year' | 'client';
 export type TaskStatus = 'pending' | 'in-progress' | 'done' | 'blocked';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical';
 
@@ -152,6 +152,8 @@ export function getScopeKey(date: Date, scope: TaskScope): string {
             return `${year}-${month}`;
         case 'year':
             return `${year}`;
+        case 'client':
+            return `${year}-${month}-${day}`;
     }
 }
 

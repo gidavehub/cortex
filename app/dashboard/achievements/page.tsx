@@ -109,7 +109,7 @@ export default function AchievementsPage() {
             }
             newProgress[achievement.id] = { current, target: achievement.requirement };
             if (current >= achievement.requirement) {
-                unlocked.push({ ...achievement, unlockedAt: now, periodKey: format(now, 'yyyy-Www') });
+                unlocked.push({ ...achievement, unlockedAt: now, periodKey: format(now, "yyyy-'W'ww") });
             }
         });
 
