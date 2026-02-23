@@ -1,50 +1,77 @@
 "use client";
 
 import { useAuth } from "@/contexts/AuthContext";
-import { Plus, Clock, CheckCircle2, Calendar, Sun, Moon, Sparkles, Target, TrendingUp, Flame, Award, ArrowRight, Layers } from "lucide-react";
-import { useEffect, useState } from "react";
-import { collection, query, orderBy, onSnapshot, updateDoc, doc, where, Timestamp } from "firebase/firestore";
+import {
+    Plus, Clock, CheckCircle2, Calendar, Sun, Moon, Sparkles,
+    Target, TrendingUp, Flame, Award, ArrowRight, Layers,
+    Megaphone, Zap, Trophy, Star, Shield, Crown
+} from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { collection, query, orderBy, onSnapshot, updateDoc, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { format, startOfWeek, endOfWeek, differenceInDays, isToday, subDays, eachDayOfInterval } from "date-fns";
+import {
+    format, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
+    isWithinInterval, differenceInDays, isToday, subDays,
+    eachDayOfInterval, subMonths, parseISO
+} from "date-fns";
 import { Task, TASK_COLORS } from "@/lib/types/task";
+import {
+    WEEKLY_ACHIEVEMENTS, MONTHLY_ACHIEVEMENTS, YEARLY_ACHIEVEMENTS,
+    TIER_CONFIG, Achievement
+} from "@/lib/types/achievement";
+import { OUTREACH_TARGETS } from "@/lib/types/outreach";
+import { subscribeAllOutreach, subscribeFollowUps } from "@/lib/firebase-outreach";
+import { OutreachContact } from "@/lib/types/outreach";
 import { cn } from "@/lib/utils";
+import {
+    GoalRing, ActivityHeatmap, SkillRadar,
+    ProductivityStream, WeeklyAreaChart, ScopeBarChart
+} from "@/components/dashboard/DashboardCharts";
 
 export default function DashboardPage() {
     const { user } = useAuth();
     const [tasks, setTasks] = useState<Task[]>([]);
     const [loading, setLoading] = useState(true);
+    const [outreachContacts, setOutreachContacts] = useState<OutreachContact[]>([]);
+    const [followUpCount, setFollowUpCount] = useState(0);
 
     // Time & Date
     const today = new Date();
-    const dateString = format(today, 'EEEE, MMMM do');
-    const todaySlug = format(today, 'yyyy-MM-dd');
+    const dateString = format(today, "EEEE, MMMM do");
+    const todaySlug = format(today, "yyyy-MM-dd");
     const currentYear = today.getFullYear();
-    const currentMonth = format(today, 'yyyy-MM');
+    const currentMonth = format(today, "yyyy-MM");
     const currentWeek = getISOWeekString(today);
 
-    // Fetch all tasks
+    // ── Fetch all tasks ──
     useEffect(() => {
         if (!user) return;
-
         const q = query(
             collection(db, "users", user.uid, "tasks"),
             orderBy("createdAt", "desc")
         );
-
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const fetchedTasks = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data(),
-                createdAt: doc.data().createdAt?.toDate?.() || new Date(),
-                updatedAt: doc.data().updatedAt?.toDate?.() || new Date(),
+            const fetchedTasks = snapshot.docs.map(d => ({
+                id: d.id,
+                ...d.data(),
+                createdAt: d.data().createdAt?.toDate?.() || new Date(),
+                updatedAt: d.data().updatedAt?.toDate?.() || new Date(),
+                deadline: d.data().deadline?.toDate?.() || undefined,
             })) as Task[];
             setTasks(fetchedTasks);
             setLoading(false);
         });
-
         return () => unsubscribe();
+    }, [user]);
+
+    // ── Fetch outreach data ──
+    useEffect(() => {
+        if (!user) return;
+        const unsub1 = subscribeAllOutreach(user.uid, setOutreachContacts);
+        const unsub2 = subscribeFollowUps(user.uid, (items) => setFollowUpCount(items.length));
+        return () => { unsub1(); unsub2(); };
     }, [user]);
 
     function getISOWeekString(date: Date): string {
@@ -53,447 +80,680 @@ export default function DashboardPage() {
         d.setUTCDate(d.getUTCDate() + 4 - dayNum);
         const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
         const weekNum = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-        return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+        return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
     }
 
     function getTimeOfDay() {
         const hour = new Date().getHours();
-        if (hour < 12) return { greeting: "Good Morning", icon: Sun, message: "Let's make today count!" };
-        if (hour < 18) return { greeting: "Good Afternoon", icon: Sun, message: "Keep the momentum going!" };
-        return { greeting: "Good Evening", icon: Moon, message: "Wrapping up the day?" };
+        if (hour < 12) return { greeting: "Good Morning", icon: Sun, emoji: "☀️", message: "Let's make today count!" };
+        if (hour < 18) return { greeting: "Good Afternoon", icon: Sun, emoji: "🌤️", message: "Keep the momentum going!" };
+        return { greeting: "Good Evening", icon: Moon, emoji: "🌙", message: "Wrapping up the day?" };
     }
 
-    const { greeting, icon: TimeIcon, message } = getTimeOfDay();
+    const { greeting, icon: TimeIcon, emoji, message } = getTimeOfDay();
 
-    // Task Categories
-    const todayTasks = tasks.filter(t => t.scope === 'day' && t.scopeKey === todaySlug);
-    const weekTasks = tasks.filter(t => t.scope === 'week' && t.scopeKey === currentWeek);
-    const monthTasks = tasks.filter(t => t.scope === 'month' && t.scopeKey === currentMonth);
-    const yearTasks = tasks.filter(t => t.scope === 'year' && t.scopeKey === String(currentYear));
+    // ── Task scopes ──
+    const todayTasks = tasks.filter(t => t.scope === "day" && t.scopeKey === todaySlug);
+    const weekTasks = tasks.filter(t => t.scope === "week" && t.scopeKey === currentWeek);
+    const monthTasks = tasks.filter(t => t.scope === "month" && t.scopeKey === currentMonth);
+    const yearTasks = tasks.filter(t => t.scope === "year" && t.scopeKey === String(currentYear));
 
-    // Stats
-    const completedToday = todayTasks.filter(t => t.status === 'done').length;
-    const pendingToday = todayTasks.filter(t => t.status !== 'done').length;
+    // ── Stats ──
+    const completedToday = todayTasks.filter(t => t.status === "done").length;
+    const pendingToday = todayTasks.filter(t => t.status !== "done").length;
+    const todayProgress = todayTasks.length > 0 ? Math.round((completedToday / todayTasks.length) * 100) : 0;
     const weekProgress = weekTasks.length > 0
-        ? Math.round(weekTasks.reduce((sum, t) => sum + t.progress, 0) / weekTasks.length)
-        : 0;
+        ? Math.round(weekTasks.reduce((s, t) => s + t.progress, 0) / weekTasks.length) : 0;
     const monthProgress = monthTasks.length > 0
-        ? Math.round(monthTasks.reduce((sum, t) => sum + t.progress, 0) / monthTasks.length)
-        : 0;
+        ? Math.round(monthTasks.reduce((s, t) => s + t.progress, 0) / monthTasks.length) : 0;
+    const yearProgress = yearTasks.length > 0
+        ? Math.round(yearTasks.reduce((s, t) => s + t.progress, 0) / yearTasks.length) : 0;
 
-    // Calculate streak (consecutive days with completed tasks in last 30 days)
-    const calculateStreak = () => {
-        let streak = 0;
-        const last30Days = eachDayOfInterval({
-            start: subDays(today, 30),
-            end: today
-        }).reverse();
-
-        for (const day of last30Days) {
-            const dayKey = format(day, 'yyyy-MM-dd');
-            const dayTasks = tasks.filter(t => t.scope === 'day' && t.scopeKey === dayKey);
-            const hasCompleted = dayTasks.some(t => t.status === 'done');
-
-            if (hasCompleted || isToday(day)) {
-                streak++;
-            } else {
-                break;
-            }
+    // ── Streak ──
+    const streak = useMemo(() => {
+        let s = 0;
+        const last30 = eachDayOfInterval({ start: subDays(today, 30), end: today }).reverse();
+        for (const day of last30) {
+            const dayKey = format(day, "yyyy-MM-dd");
+            const dayTasks = tasks.filter(t => t.scope === "day" && t.scopeKey === dayKey);
+            if (dayTasks.some(t => t.status === "done") || isToday(day)) s++;
+            else break;
         }
-        return streak;
-    };
-    const streak = calculateStreak();
+        return s;
+    }, [tasks]);
 
-    // Next upcoming task (with time)
+    // ── Achievement calculations ──
+    const achievementData = useMemo(() => {
+        const now = new Date();
+        const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+        const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+        const monthStart = startOfMonth(now);
+        const monthEnd = endOfMonth(now);
+
+        const thisWeekDone = tasks.filter(t =>
+            t.status === "done" && isWithinInterval(t.updatedAt, { start: weekStart, end: weekEnd })
+        );
+        const thisMonthDone = tasks.filter(t =>
+            t.status === "done" && isWithinInterval(t.updatedAt, { start: monthStart, end: monthEnd })
+        );
+
+        const completedDates = new Set(
+            tasks.filter(t => t.status === "done").map(t => format(t.updatedAt, "yyyy-MM-dd"))
+        );
+        let achieveStreak = 0;
+        let checkDate = new Date();
+        while (completedDates.has(format(checkDate, "yyyy-MM-dd"))) {
+            achieveStreak++;
+            checkDate = new Date(checkDate.setDate(checkDate.getDate() - 1));
+        }
+
+        // Calculate unlocked count per tier
+        let weeklyUnlocked = 0;
+        let monthlyUnlocked = 0;
+        let yearlyUnlocked = 0;
+        let totalXP = 0;
+
+        const getWeeklyVal = (id: string) => {
+            switch (id) {
+                case "streak_starter": return achieveStreak;
+                case "productive_week": return thisWeekDone.length;
+                case "goal_crusher": return tasks.filter(t => t.scope === "week" && t.status === "done").length > 0 ? 1 : 0;
+                default: return 0;
+            }
+        };
+
+        const getMonthlyVal = (id: string) => {
+            switch (id) {
+                case "consistent": return new Set(thisMonthDone.map(t => format(t.updatedAt, "yyyy-MM-dd"))).size;
+                case "progress_master":
+                    const mg = tasks.filter(t => t.scope === "month");
+                    return mg.length > 0 ? Math.round(mg.reduce((a, t) => a + t.progress, 0) / mg.length) : 0;
+                case "perfect_week": return thisWeekDone.length >= 10 ? 100 : Math.min(thisWeekDone.length * 10, 99);
+                case "overachiever": return thisMonthDone.length;
+                case "deadline_keeper":
+                    const wd = tasks.filter(t => t.deadline);
+                    const md = wd.filter(t => t.status === "done" && t.deadline && t.updatedAt <= t.deadline);
+                    return wd.length > 0 ? Math.round((md.length / wd.length) * 100) : 100;
+                default: return 0;
+            }
+        };
+
+        WEEKLY_ACHIEVEMENTS.forEach(a => {
+            if (getWeeklyVal(a.id) >= a.requirement) { weeklyUnlocked++; totalXP += a.rewardXP; }
+        });
+        MONTHLY_ACHIEVEMENTS.forEach(a => {
+            if (getMonthlyVal(a.id) >= a.requirement) { monthlyUnlocked++; totalXP += a.rewardXP; }
+        });
+
+        const completedYearTasks = tasks.filter(t => t.createdAt.getFullYear() === now.getFullYear() && t.status === "done");
+        YEARLY_ACHIEVEMENTS.forEach(a => {
+            let val = 0;
+            switch (a.id) {
+                case "year_champion": val = tasks.filter(t => t.scope === "year" && t.status === "done").length; break;
+                case "productivity_legend": val = completedYearTasks.length; break;
+                case "century_club": val = new Set(completedYearTasks.map(t => format(t.updatedAt, "yyyy-MM-dd"))).size; break;
+                case "diverse_achiever": val = new Set(completedYearTasks.map(t => t.scope)).size; break;
+                case "streak_legend": val = achieveStreak; break;
+                default: break;
+            }
+            if (val >= a.requirement) { yearlyUnlocked++; totalXP += a.rewardXP; }
+        });
+
+        const totalAchievements = WEEKLY_ACHIEVEMENTS.length + MONTHLY_ACHIEVEMENTS.length + YEARLY_ACHIEVEMENTS.length;
+        const totalUnlocked = weeklyUnlocked + monthlyUnlocked + yearlyUnlocked;
+
+        // Radar data
+        const radarData = [
+            { category: "Consistency", value: Math.min(achieveStreak * 10, 100) },
+            { category: "Productivity", value: Math.min(thisWeekDone.length * 10, 100) },
+            { category: "Goals", value: weekProgress },
+            { category: "Deadlines", value: getMonthlyVal("deadline_keeper") },
+            { category: "Streaks", value: Math.min(streak * 15, 100) },
+            { category: "Diversity", value: Math.min(new Set(tasks.filter(t => t.status === "done").map(t => t.scope)).size * 25, 100) },
+        ];
+
+        return { weeklyUnlocked, monthlyUnlocked, yearlyUnlocked, totalUnlocked, totalAchievements, totalXP, radarData };
+    }, [tasks, streak, weekProgress]);
+
+    // ── Activity heatmap data ──
+    const heatmapData = useMemo(() => {
+        const sixMonthsAgo = subMonths(today, 6);
+        const days = eachDayOfInterval({ start: sixMonthsAgo, end: today });
+        return days.map(day => {
+            const dayKey = format(day, "yyyy-MM-dd");
+            const count = tasks.filter(t =>
+                t.status === "done" && format(t.updatedAt, "yyyy-MM-dd") === dayKey
+            ).length;
+            return { day: dayKey, value: count };
+        }).filter(d => d.value > 0);
+    }, [tasks]);
+
+    // ── Stream chart data (30 days) ──
+    const streamData = useMemo(() => {
+        const last30 = eachDayOfInterval({ start: subDays(today, 29), end: today });
+        return last30.map(day => {
+            const dayKey = format(day, "yyyy-MM-dd");
+            return {
+                Daily: tasks.filter(t => t.scope === "day" && t.scopeKey === dayKey && t.status === "done").length,
+                Weekly: tasks.filter(t => t.scope === "week" && t.status === "done" && format(t.updatedAt, "yyyy-MM-dd") === dayKey).length,
+                Monthly: tasks.filter(t => t.scope === "month" && t.status === "done" && format(t.updatedAt, "yyyy-MM-dd") === dayKey).length,
+            };
+        });
+    }, [tasks]);
+
+    // ── Weekly area chart data ──
+    const weeklyChartData = useMemo(() => {
+        const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+        const weekEnd = endOfWeek(today, { weekStartsOn: 1 });
+        const days = eachDayOfInterval({ start: weekStart, end: weekEnd });
+        return days.map(day => ({
+            day: format(day, "EEE"),
+            tasks: tasks.filter(t =>
+                t.status === "done" && format(t.updatedAt, "yyyy-MM-dd") === format(day, "yyyy-MM-dd")
+            ).length,
+        }));
+    }, [tasks]);
+
+    // ── Scope bar chart data ──
+    const scopeBarData = useMemo(() => [
+        { scope: "Day", completed: todayTasks.filter(t => t.status === "done").length, total: todayTasks.length },
+        { scope: "Week", completed: weekTasks.filter(t => t.status === "done").length, total: weekTasks.length },
+        { scope: "Month", completed: monthTasks.filter(t => t.status === "done").length, total: monthTasks.length },
+        { scope: "Year", completed: yearTasks.filter(t => t.status === "done").length, total: yearTasks.length },
+    ], [todayTasks, weekTasks, monthTasks, yearTasks]);
+
+    // ── Outreach stats ──
+    const outreachStats = useMemo(() => {
+        const todayStr = format(today, "yyyy-MM-dd");
+        const novaToday = outreachContacts.filter(c => c.program === "nova" && c.date === todayStr).length;
+        const amakaToday = outreachContacts.filter(c => c.program === "amaka_ai" && c.date === todayStr).length;
+        return { novaToday, amakaToday };
+    }, [outreachContacts]);
+
+    // ── Next upcoming task ──
     const upcomingTask = todayTasks
-        .filter(t => t.status !== 'done' && t.startTime)
-        .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''))[0];
+        .filter(t => t.status !== "done" && t.startTime)
+        .sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""))[0];
 
-    // Toggle task status
+    // Toggle task
     const toggleTask = async (task: Task) => {
         if (!user) return;
-        const newStatus = task.status === 'done' ? 'pending' : 'done';
-        const newProgress = newStatus === 'done' ? 100 : 0;
+        const newStatus = task.status === "done" ? "pending" : "done";
         await updateDoc(doc(db, "users", user.uid, "tasks", task.id), {
             status: newStatus,
-            progress: newProgress
+            progress: newStatus === "done" ? 100 : 0,
         });
     };
 
-    // Motivational insights based on data
+    // Motivational insight
     const getInsight = () => {
-        if (completedToday >= 5) return "🔥 You're on fire! " + completedToday + " tasks completed!";
+        if (completedToday >= 5) return `🔥 You're on fire! ${completedToday} tasks completed!`;
         if (pendingToday === 0 && todayTasks.length > 0) return "🎉 All tasks done! Time to relax.";
-        if (weekProgress >= 80) return "📈 Week goals nearly complete at " + weekProgress + "%!";
-        if (streak >= 7) return "🏆 " + streak + " day streak! Keep it going!";
+        if (weekProgress >= 80) return `📈 Week goals nearly complete at ${weekProgress}%!`;
+        if (streak >= 7) return `🏆 ${streak} day streak! Keep it going!`;
         if (monthTasks.length > 0 && monthProgress < 25) return "💪 Month just started. Let's build momentum!";
-        if (yearTasks.length > 0) return "🎯 " + yearTasks.length + " year goal" + (yearTasks.length > 1 ? 's' : '') + " to conquer!";
-        return "✨ " + message;
+        return `✨ ${message}`;
     };
 
+    // ── Heatmap date range ──
+    const heatmapFrom = format(subMonths(today, 6), "yyyy-MM-dd");
+    const heatmapTo = format(today, "yyyy-MM-dd");
+
     return (
-        <div className="space-y-8 pb-10">
-            {/* Hero Header */}
+        <div className="space-y-6 pb-10">
+
+            {/* ═══════════════════════════════════════════════════
+                1. HERO HEADER — Personalized greeting + XP + Actions
+            ═══════════════════════════════════════════════════ */}
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex items-end justify-between px-2"
+                className="relative overflow-hidden rounded-[32px] bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900 p-8 text-white"
             >
-                <div>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="w-10 h-10 bg-gradient-to-br from-yellow-100 to-orange-100 rounded-xl flex items-center justify-center">
-                            <TimeIcon className="w-5 h-5 text-yellow-600" />
+                {/* Ambient blobs */}
+                <div className="absolute -top-20 -right-20 w-60 h-60 bg-blue-500/20 rounded-full blur-3xl" />
+                <div className="absolute -bottom-20 -left-10 w-48 h-48 bg-purple-500/15 rounded-full blur-3xl" />
+                <div className="absolute top-10 right-40 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl" />
+
+                <div className="relative z-10 flex items-end justify-between">
+                    <div>
+                        <div className="flex items-center gap-3 mb-3">
+                            <div className="w-12 h-12 bg-white/10 backdrop-blur-sm rounded-2xl flex items-center justify-center text-2xl border border-white/10">
+                                {emoji}
+                            </div>
+                            <div>
+                                <p className="text-sm font-medium text-white/50 uppercase tracking-wider">{dateString}</p>
+                            </div>
                         </div>
-                        <span className="text-sm font-medium text-gray-500 uppercase tracking-wide">{dateString}</span>
+                        <h1 className="text-4xl font-bold mb-2 tracking-tight">
+                            {greeting}, <span className="bg-gradient-to-r from-blue-300 to-purple-300 bg-clip-text text-transparent">{user?.name?.split(" ")[0] || "there"}</span>!
+                        </h1>
+                        <p className="text-lg text-white/60">{getInsight()}</p>
                     </div>
-                    <h1 className="text-4xl font-bold text-[#1A1C1E] mb-1">{greeting}, {user?.name?.split(' ')[0] || 'there'}!</h1>
-                    <p className="text-[#64748B] text-lg">{getInsight()}</p>
-                </div>
-                <div className="flex gap-3">
-                    <Link href={`/dashboard/calendar/day/${todaySlug}`}>
-                        <button className="px-5 py-3 bg-white border border-gray-200 text-gray-700 rounded-2xl font-medium shadow-sm hover:shadow-md hover:border-gray-300 transition-all flex items-center gap-2">
-                            <Calendar className="w-5 h-5" />
-                            Plan Today
-                        </button>
-                    </Link>
-                    <Link href={`/dashboard/calendar`}>
-                        <button className="px-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white rounded-2xl font-medium shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2">
-                            <Target className="w-5 h-5" />
-                            Full Calendar
-                        </button>
-                    </Link>
+
+                    <div className="flex items-center gap-4">
+                        {/* XP Badge */}
+                        <motion.div
+                            whileHover={{ scale: 1.05 }}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-yellow-400/20 to-amber-400/20 border border-yellow-400/30 rounded-2xl backdrop-blur-sm"
+                        >
+                            <Sparkles className="w-5 h-5 text-yellow-400" />
+                            <span className="font-bold text-yellow-300 text-lg">{achievementData.totalXP}</span>
+                            <span className="text-yellow-400/60 text-sm font-medium">XP</span>
+                        </motion.div>
+
+                        {/* Streak Badge */}
+                        {streak > 0 && (
+                            <motion.div
+                                whileHover={{ scale: 1.05 }}
+                                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-orange-400/20 to-rose-400/20 border border-orange-400/30 rounded-2xl backdrop-blur-sm"
+                            >
+                                <Flame className="w-5 h-5 text-orange-400" />
+                                <span className="font-bold text-orange-300 text-lg">{streak}</span>
+                                <span className="text-orange-400/60 text-sm font-medium">day streak</span>
+                            </motion.div>
+                        )}
+
+                        {/* Quick actions */}
+                        <div className="flex gap-2">
+                            <Link href={`/dashboard/calendar/day/${todaySlug}`}>
+                                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                                    className="px-5 py-3 bg-white/10 border border-white/15 rounded-2xl font-medium text-sm hover:bg-white/20 transition-all backdrop-blur-sm flex items-center gap-2">
+                                    <Calendar className="w-4 h-4" /> Plan Today
+                                </motion.button>
+                            </Link>
+                            <Link href="/dashboard/tasks">
+                                <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                                    className="px-5 py-3 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-2xl font-medium text-sm shadow-lg shadow-blue-500/25 flex items-center gap-2">
+                                    <Target className="w-4 h-4" /> All Tasks
+                                </motion.button>
+                            </Link>
+                        </div>
+                    </div>
                 </div>
             </motion.div>
 
-            {/* Stats Row */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="grid grid-cols-5 gap-4"
-            >
-                <div className="bg-white rounded-2xl p-5 shadow-soft border border-gray-100">
-                    <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-medium text-gray-500">Today</span>
-                        <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
-                            <CheckCircle2 className="w-4 h-4 text-blue-500" />
-                        </div>
-                    </div>
-                    <p className="text-3xl font-bold text-gray-900">{completedToday}/{todayTasks.length}</p>
-                    <p className="text-xs text-gray-400 mt-1">tasks done</p>
-                </div>
-                <div className="bg-white rounded-2xl p-5 shadow-soft border border-gray-100">
-                    <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-medium text-gray-500">Week Goals</span>
-                        <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center">
-                            <Layers className="w-4 h-4 text-indigo-500" />
-                        </div>
-                    </div>
-                    <p className="text-3xl font-bold text-indigo-600">{weekProgress}%</p>
-                    <div className="mt-2 h-1.5 bg-indigo-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${weekProgress}%` }} />
-                    </div>
-                </div>
-                <div className="bg-white rounded-2xl p-5 shadow-soft border border-gray-100">
-                    <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-medium text-gray-500">Month Goals</span>
-                        <div className="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center">
-                            <Target className="w-4 h-4 text-purple-500" />
-                        </div>
-                    </div>
-                    <p className="text-3xl font-bold text-purple-600">{monthProgress}%</p>
-                    <div className="mt-2 h-1.5 bg-purple-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-purple-500 rounded-full transition-all" style={{ width: `${monthProgress}%` }} />
-                    </div>
-                </div>
-                <div className="bg-white rounded-2xl p-5 shadow-soft border border-gray-100">
-                    <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-medium text-gray-500">Year Goals</span>
-                        <div className="w-8 h-8 bg-rose-50 rounded-lg flex items-center justify-center">
-                            <TrendingUp className="w-4 h-4 text-rose-500" />
-                        </div>
-                    </div>
-                    <p className="text-3xl font-bold text-rose-600">{yearTasks.length}</p>
-                    <p className="text-xs text-gray-400 mt-1">active goals</p>
-                </div>
-                <div className="bg-gradient-to-br from-orange-400 to-rose-500 rounded-2xl p-5 shadow-lg text-white">
-                    <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-medium text-white/80">Streak</span>
-                        <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-                            <Flame className="w-4 h-4 text-white" />
-                        </div>
-                    </div>
-                    <p className="text-3xl font-bold">{streak}</p>
-                    <p className="text-xs text-white/70 mt-1">days in a row</p>
-                </div>
-            </motion.div>
+            {/* ═══════════════════════════════════════════════════
+                2. RADIAL PROGRESS RINGS
+            ═══════════════════════════════════════════════════ */}
+            <div className="grid grid-cols-4 gap-4">
+                <GoalRing
+                    value={completedToday}
+                    maxValue={Math.max(todayTasks.length, 1)}
+                    label="Today"
+                    sublabel={`${completedToday}/${todayTasks.length} tasks`}
+                    color="#3b82f6"
+                    trailColor="#dbeafe"
+                    delay={0.1}
+                />
+                <GoalRing
+                    value={weekProgress}
+                    label="This Week"
+                    sublabel={`${weekTasks.filter(t => t.status === "done").length}/${weekTasks.length} goals`}
+                    color="#6366f1"
+                    trailColor="#e0e7ff"
+                    delay={0.15}
+                />
+                <GoalRing
+                    value={monthProgress}
+                    label="This Month"
+                    sublabel={`${monthTasks.filter(t => t.status === "done").length}/${monthTasks.length} goals`}
+                    color="#a855f7"
+                    trailColor="#f3e8ff"
+                    delay={0.2}
+                />
+                <GoalRing
+                    value={yearProgress}
+                    label="This Year"
+                    sublabel={`${yearTasks.filter(t => t.status === "done").length}/${yearTasks.length} goals`}
+                    color="#f43f5e"
+                    trailColor="#ffe4e6"
+                    delay={0.25}
+                />
+            </div>
 
-            {/* Main Content Grid */}
+            {/* ═══════════════════════════════════════════════════
+                3. ACTIVITY HEATMAP
+            ═══════════════════════════════════════════════════ */}
+            <ActivityHeatmap data={heatmapData} from={heatmapFrom} to={heatmapTo} />
+
+            {/* ═══════════════════════════════════════════════════
+                4. STREAM CHART + SKILL RADAR
+            ═══════════════════════════════════════════════════ */}
             <div className="grid grid-cols-12 gap-6">
-                {/* Today's Tasks - 8 cols */}
+                <div className="col-span-7">
+                    <ProductivityStream
+                        data={streamData}
+                        keys={["Daily", "Weekly", "Monthly"]}
+                    />
+                </div>
+                <div className="col-span-5">
+                    <SkillRadar data={achievementData.radarData} />
+                </div>
+            </div>
+
+            {/* ═══════════════════════════════════════════════════
+                5. WEEKLY CHART + SCOPE BAR + ACHIEVEMENTS
+            ═══════════════════════════════════════════════════ */}
+            <div className="grid grid-cols-12 gap-6">
+                <div className="col-span-4">
+                    <WeeklyAreaChart data={weeklyChartData} />
+                </div>
+                <div className="col-span-4">
+                    <ScopeBarChart data={scopeBarData} />
+                </div>
+                <div className="col-span-4">
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.5 }}
+                        className="bg-gradient-to-br from-yellow-50 to-amber-50 rounded-3xl p-6 shadow-soft border border-yellow-200/50 h-full"
+                    >
+                        <div className="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-900">Achievements</h3>
+                                <p className="text-xs text-gray-400">{achievementData.totalUnlocked}/{achievementData.totalAchievements} unlocked</p>
+                            </div>
+                            <Link href="/dashboard/achievements">
+                                <button className="text-xs font-medium text-amber-600 hover:underline flex items-center gap-1">
+                                    View All <ArrowRight className="w-3 h-3" />
+                                </button>
+                            </Link>
+                        </div>
+
+                        {/* XP Progress */}
+                        <div className="mb-4 p-3 bg-white/80 rounded-2xl border border-yellow-200/30">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium text-gray-500">Total XP</span>
+                                <span className="text-sm font-bold text-amber-600">{achievementData.totalXP}</span>
+                            </div>
+                            <div className="h-2 bg-amber-100 rounded-full overflow-hidden">
+                                <motion.div
+                                    className="h-full bg-gradient-to-r from-yellow-400 to-amber-500 rounded-full"
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${Math.min((achievementData.totalXP / 2000) * 100, 100)}%` }}
+                                    transition={{ duration: 1, delay: 0.6 }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Tier breakdown */}
+                        <div className="space-y-2">
+                            {([
+                                { tier: "weekly" as const, unlocked: achievementData.weeklyUnlocked, total: WEEKLY_ACHIEVEMENTS.length, icon: "⚡" },
+                                { tier: "monthly" as const, unlocked: achievementData.monthlyUnlocked, total: MONTHLY_ACHIEVEMENTS.length, icon: "🏆" },
+                                { tier: "yearly" as const, unlocked: achievementData.yearlyUnlocked, total: YEARLY_ACHIEVEMENTS.length, icon: "👑" },
+                            ]).map(({ tier, unlocked, total, icon }) => (
+                                <div key={tier} className="flex items-center gap-3 p-2.5 bg-white/60 rounded-xl">
+                                    <span className="text-lg">{icon}</span>
+                                    <div className="flex-1">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-xs font-semibold text-gray-700 capitalize">{tier}</span>
+                                            <span className="text-xs font-bold text-gray-500">{unlocked}/{total}</span>
+                                        </div>
+                                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mt-1">
+                                            <div
+                                                className={`h-full rounded-full bg-gradient-to-r ${TIER_CONFIG[tier].bgGradient}`}
+                                                style={{ width: total > 0 ? `${(unlocked / total) * 100}%` : "0%" }}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </motion.div>
+                </div>
+            </div>
+
+            {/* ═══════════════════════════════════════════════════
+                6. TODAY'S TASKS + OUTREACH PULSE + MOTIVATION
+            ═══════════════════════════════════════════════════ */}
+            <div className="grid grid-cols-12 gap-6">
+                {/* Today's Tasks */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2 }}
-                    className="col-span-12 lg:col-span-8 bg-white rounded-[32px] p-8 shadow-soft border border-gray-100 flex flex-col min-h-[500px]"
+                    transition={{ delay: 0.55 }}
+                    className="col-span-5 bg-white rounded-3xl p-6 shadow-soft border border-gray-100 flex flex-col max-h-[420px]"
                 >
-                    <div className="flex justify-between items-center mb-6">
+                    <div className="flex justify-between items-center mb-4">
                         <div>
-                            <h2 className="text-xl font-bold text-[#1A1C1E]">Today's Tasks</h2>
-                            <p className="text-sm text-gray-500">
-                                {pendingToday} remaining • {completedToday} completed
-                            </p>
+                            <h3 className="text-lg font-bold text-gray-900">Today&apos;s Tasks</h3>
+                            <p className="text-xs text-gray-400">{pendingToday} remaining · {completedToday} done</p>
                         </div>
                         <Link href={`/dashboard/calendar/day/${todaySlug}`}>
-                            <button className="text-sm text-blue-600 font-medium hover:underline flex items-center gap-1">
-                                View Timeline
-                                <ArrowRight className="w-4 h-4" />
+                            <button className="text-xs text-blue-600 font-medium hover:underline flex items-center gap-1">
+                                Timeline <ArrowRight className="w-3 h-3" />
                             </button>
                         </Link>
                     </div>
 
-                    {/* Upcoming Alert */}
+                    {/* Upcoming alert */}
                     {upcomingTask && (
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.95 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100"
-                        >
+                        <div className="mb-3 p-3 rounded-2xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100">
                             <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center">
-                                    <Clock className="w-5 h-5 text-white" />
+                                <div className="w-8 h-8 rounded-xl bg-blue-500 flex items-center justify-center">
+                                    <Clock className="w-4 h-4 text-white" />
                                 </div>
-                                <div className="flex-1">
-                                    <p className="text-xs font-medium text-blue-600 uppercase tracking-wide">Up Next @ {upcomingTask.startTime}</p>
-                                    <p className="font-semibold text-gray-900">{upcomingTask.title}</p>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[10px] font-medium text-blue-600 uppercase tracking-wide">Next @ {upcomingTask.startTime}</p>
+                                    <p className="font-semibold text-gray-900 text-sm truncate">{upcomingTask.title}</p>
                                 </div>
-                                <button
-                                    onClick={() => toggleTask(upcomingTask)}
-                                    className="px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-xl hover:bg-blue-600 transition-colors"
-                                >
-                                    Start
-                                </button>
                             </div>
-                        </motion.div>
+                        </div>
                     )}
 
-                    {/* Task List */}
-                    <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-2">
                         {loading ? (
-                            <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-                                <div className="w-5 h-5 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin"></div>
+                            <div className="flex items-center justify-center h-full">
+                                <div className="w-5 h-5 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin" />
                             </div>
                         ) : todayTasks.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                                <div className="w-20 h-20 bg-gray-50 rounded-3xl flex items-center justify-center mb-4">
-                                    <CheckCircle2 className="w-10 h-10 text-gray-300" />
+                            <div className="flex flex-col items-center justify-center h-full text-center py-8">
+                                <div className="w-14 h-14 bg-gray-50 rounded-2xl flex items-center justify-center mb-3">
+                                    <CheckCircle2 className="w-7 h-7 text-gray-300" />
                                 </div>
-                                <h3 className="text-lg font-semibold text-gray-800 mb-2">No tasks for today</h3>
-                                <p className="text-gray-500 max-w-sm mb-4">Plan your day by adding tasks to your timeline.</p>
+                                <p className="text-sm font-semibold text-gray-800 mb-1">No tasks for today</p>
+                                <p className="text-xs text-gray-400 mb-3">Plan your day to get started.</p>
                                 <Link href={`/dashboard/calendar/day/${todaySlug}`}>
-                                    <button className="px-6 py-2.5 bg-gray-900 text-white rounded-xl font-medium hover:bg-gray-800 transition-colors">
+                                    <button className="px-4 py-2 bg-gray-900 text-white rounded-xl text-xs font-medium hover:bg-gray-800 transition-colors">
                                         Plan your day
                                     </button>
                                 </Link>
                             </div>
                         ) : (
-                            <div className="space-y-3">
-                                {todayTasks.map((task, idx) => (
-                                    <motion.div
-                                        key={task.id}
-                                        initial={{ opacity: 0, x: -10 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        transition={{ delay: idx * 0.05 }}
-                                        className={cn(
-                                            "group flex items-center gap-4 p-4 rounded-2xl border transition-all cursor-pointer",
-                                            task.status === 'done'
-                                                ? "bg-gray-50 border-gray-100"
-                                                : "bg-white border-gray-100 hover:border-gray-200 hover:shadow-md"
+                            todayTasks.map((task, idx) => (
+                                <motion.div
+                                    key={task.id}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.55 + idx * 0.03 }}
+                                    className={cn(
+                                        "group flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer",
+                                        task.status === "done"
+                                            ? "bg-gray-50 border-gray-100"
+                                            : "bg-white border-gray-100 hover:border-gray-200 hover:shadow-sm"
+                                    )}
+                                    onClick={() => toggleTask(task)}
+                                >
+                                    <div className={cn(
+                                        "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors flex-shrink-0",
+                                        task.status === "done"
+                                            ? "bg-green-500 border-green-500"
+                                            : "border-gray-300 group-hover:border-green-400"
+                                    )}>
+                                        {task.status === "done" && <CheckCircle2 className="w-3 h-3 text-white" />}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className={cn(
+                                            "text-sm font-medium truncate",
+                                            task.status === "done" ? "text-gray-400 line-through" : "text-gray-900"
+                                        )}>{task.title}</p>
+                                        {task.startTime && (
+                                            <p className="text-[11px] text-gray-400">{task.startTime}{task.endTime ? ` - ${task.endTime}` : ""}</p>
                                         )}
-                                        onClick={() => toggleTask(task)}
-                                    >
-                                        <div
-                                            className={cn(
-                                                "w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors",
-                                                task.status === 'done'
-                                                    ? "bg-green-500 border-green-500"
-                                                    : "border-gray-300 group-hover:border-green-400"
-                                            )}
-                                        >
-                                            {task.status === 'done' && (
-                                                <CheckCircle2 className="w-4 h-4 text-white" />
-                                            )}
-                                        </div>
-                                        <div className="flex-1">
-                                            <p className={cn(
-                                                "font-medium",
-                                                task.status === 'done' ? "text-gray-400 line-through" : "text-gray-900"
-                                            )}>
-                                                {task.title}
-                                            </p>
-                                            {task.startTime && (
-                                                <p className="text-sm text-gray-400">
-                                                    {task.startTime} - {task.endTime}
-                                                </p>
-                                            )}
-                                        </div>
-                                        <div
-                                            className="w-3 h-3 rounded-full"
-                                            style={{ backgroundColor: task.color || TASK_COLORS[0] }}
-                                        />
-                                    </motion.div>
-                                ))}
-                            </div>
+                                    </div>
+                                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: task.color || TASK_COLORS[0] }} />
+                                </motion.div>
+                            ))
                         )}
                     </div>
                 </motion.div>
 
-                {/* Right Widgets - 4 cols */}
-                <div className="col-span-12 lg:col-span-4 space-y-6">
-                    {/* Week Goals Widget */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.3 }}
-                        className="bg-white rounded-[32px] p-6 shadow-soft border border-gray-100"
-                    >
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-lg font-bold text-[#1A1C1E]">Week Goals</h2>
+                {/* Outreach Pulse */}
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.6 }}
+                    className="col-span-3 bg-white rounded-3xl p-6 shadow-soft border border-gray-100"
+                >
+                    <div className="flex items-center justify-between mb-5">
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-900">Outreach Pulse</h3>
+                            <p className="text-xs text-gray-400">Daily progress</p>
+                        </div>
+                        <Link href="/dashboard/outreach">
+                            <button className="text-xs font-medium text-teal-600 hover:underline flex items-center gap-1">
+                                Open <ArrowRight className="w-3 h-3" />
+                            </button>
+                        </Link>
+                    </div>
+
+                    {/* Nova */}
+                    <div className="mb-5">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center">
+                                    <Zap className="w-3.5 h-3.5 text-blue-500" />
+                                </div>
+                                <span className="text-sm font-semibold text-gray-700">Nova</span>
+                            </div>
+                            <span className="text-xs font-bold text-blue-600">{outreachStats.novaToday}/{OUTREACH_TARGETS.nova.daily}</span>
+                        </div>
+                        <div className="h-2.5 bg-blue-50 rounded-full overflow-hidden">
+                            <motion.div
+                                className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${Math.min((outreachStats.novaToday / OUTREACH_TARGETS.nova.daily) * 100, 100)}%` }}
+                                transition={{ duration: 0.8, delay: 0.7 }}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Amaka AI */}
+                    <div className="mb-5">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center">
+                                    <Target className="w-3.5 h-3.5 text-purple-500" />
+                                </div>
+                                <span className="text-sm font-semibold text-gray-700">Amaka AI</span>
+                            </div>
+                            <span className="text-xs font-bold text-purple-600">{outreachStats.amakaToday}/{OUTREACH_TARGETS.amaka_ai.daily}</span>
+                        </div>
+                        <div className="h-2.5 bg-purple-50 rounded-full overflow-hidden">
+                            <motion.div
+                                className="h-full bg-gradient-to-r from-purple-400 to-purple-600 rounded-full"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${Math.min((outreachStats.amakaToday / OUTREACH_TARGETS.amaka_ai.daily) * 100, 100)}%` }}
+                                transition={{ duration: 0.8, delay: 0.75 }}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Follow-ups */}
+                    <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100">
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-xl bg-amber-400 flex items-center justify-center">
+                                <Megaphone className="w-4 h-4 text-white" />
+                            </div>
+                            <div>
+                                <p className="text-sm font-bold text-gray-900">{followUpCount}</p>
+                                <p className="text-[11px] text-gray-500">follow-ups due</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Total outreach */}
+                    <div className="mt-4 pt-4 border-t border-gray-100">
+                        <div className="flex items-center justify-between text-xs">
+                            <span className="text-gray-400">Total contacts</span>
+                            <span className="font-bold text-gray-700">{outreachContacts.length}</span>
+                        </div>
+                    </div>
+                </motion.div>
+
+                {/* Motivation + Week/Year preview */}
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.65 }}
+                    className="col-span-4 space-y-4"
+                >
+                    {/* Week Goals */}
+                    <div className="bg-white rounded-3xl p-5 shadow-soft border border-gray-100">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-sm font-bold text-gray-900">Week Goals</h3>
                             <Link href={`/dashboard/calendar/week/${currentWeek}`}>
-                                <button className="text-xs font-medium text-indigo-600 hover:underline">View All</button>
+                                <button className="text-[11px] font-medium text-indigo-600 hover:underline">View All</button>
                             </Link>
                         </div>
-
                         {weekTasks.length > 0 ? (
-                            <div className="space-y-3">
+                            <div className="space-y-2">
                                 {weekTasks.slice(0, 3).map(task => (
-                                    <div key={task.id} className="p-3 rounded-xl bg-indigo-50/50 border border-indigo-100">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <div
-                                                className="w-2 h-2 rounded-full"
-                                                style={{ backgroundColor: task.color || TASK_COLORS[0] }}
-                                            />
-                                            <span className="text-sm font-medium text-gray-900 truncate">{task.title}</span>
-                                        </div>
-                                        <div className="h-1.5 bg-indigo-100 rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full rounded-full transition-all"
-                                                style={{
-                                                    width: `${task.progress}%`,
-                                                    backgroundColor: task.color || TASK_COLORS[0]
-                                                }}
-                                            />
-                                        </div>
+                                    <div key={task.id} className="flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: task.color || TASK_COLORS[0] }} />
+                                        <span className="text-xs text-gray-700 truncate flex-1">{task.title}</span>
+                                        <span className="text-[11px] font-bold text-indigo-500">{task.progress}%</span>
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <div className="text-center py-6 text-gray-400">
-                                <Layers className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                <p className="text-sm">No week goals set</p>
-                                <Link href={`/dashboard/calendar/week/${currentWeek}`}>
-                                    <button className="mt-2 text-indigo-600 text-sm font-medium hover:underline">
-                                        Add goals →
-                                    </button>
-                                </Link>
-                            </div>
+                            <p className="text-xs text-gray-400 text-center py-3">No week goals set</p>
                         )}
-                    </motion.div>
+                    </div>
 
-                    {/* Year Goals Preview */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.35 }}
-                        className="bg-white rounded-[32px] p-6 shadow-soft border border-gray-100"
-                    >
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-lg font-bold text-[#1A1C1E]">{currentYear} Goals</h2>
-                            <Link href={`/dashboard/calendar/year/${currentYear}`}>
-                                <button className="text-xs font-medium text-rose-600 hover:underline">View All</button>
-                            </Link>
-                        </div>
-
-                        {yearTasks.length > 0 ? (
-                            <div className="space-y-3">
-                                {yearTasks.slice(0, 2).map(task => (
-                                    <div key={task.id} className="p-3 rounded-xl bg-rose-50/50 border border-rose-100">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-sm font-medium text-gray-900 truncate">{task.title}</span>
-                                            <span className="text-xs font-bold text-rose-600">{task.progress}%</span>
-                                        </div>
-                                        <div className="h-2 bg-rose-100 rounded-full overflow-hidden">
-                                            <motion.div
-                                                className="h-full bg-gradient-to-r from-orange-400 to-rose-500 rounded-full"
-                                                initial={{ width: 0 }}
-                                                animate={{ width: `${task.progress}%` }}
-                                                transition={{ duration: 0.8 }}
-                                            />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="text-center py-6 text-gray-400">
-                                <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                <p className="text-sm">No year goals set</p>
-                                <Link href={`/dashboard/calendar/year/${currentYear}`}>
-                                    <button className="mt-2 text-rose-600 text-sm font-medium hover:underline">
-                                        Set your vision →
-                                    </button>
-                                </Link>
-                            </div>
-                        )}
-                    </motion.div>
-
-                    {/* Motivation Widget */}
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.4 }}
-                        className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-[32px] p-6 shadow-soft text-white relative overflow-hidden"
-                    >
-                        <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/20 rounded-full blur-3xl -mr-10 -mt-10"></div>
-                        <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500/20 rounded-full blur-3xl -ml-10 -mb-10"></div>
+                    {/* Motivation widget */}
+                    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-5 text-white relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/15 rounded-full blur-3xl -mr-8 -mt-8" />
+                        <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-500/15 rounded-full blur-2xl -ml-8 -mb-8" />
 
                         <div className="relative z-10">
                             <div className="flex items-center gap-2 mb-3">
-                                <Award className="w-5 h-5 text-yellow-400" />
-                                <span className="text-sm font-medium text-gray-400">Achievement Unlocked</span>
+                                <Award className="w-4 h-4 text-yellow-400" />
+                                <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Motivation</span>
                             </div>
                             {streak >= 7 ? (
                                 <>
-                                    <h3 className="text-lg font-bold mb-2">🔥 {streak} Day Streak!</h3>
-                                    <p className="text-gray-400 text-sm leading-relaxed">
-                                        You've been consistent for {streak} days straight. That's discipline in action!
+                                    <h3 className="text-base font-bold mb-1">🔥 {streak} Day Streak!</h3>
+                                    <p className="text-gray-400 text-xs leading-relaxed">
+                                        {streak} days of consistency. That&apos;s discipline in action!
                                     </p>
                                 </>
                             ) : completedToday >= 3 ? (
                                 <>
-                                    <h3 className="text-lg font-bold mb-2">⚡ Productive Day!</h3>
-                                    <p className="text-gray-400 text-sm leading-relaxed">
-                                        {completedToday} tasks completed today. Keep crushing it!
-                                    </p>
+                                    <h3 className="text-base font-bold mb-1">⚡ Productive Day!</h3>
+                                    <p className="text-gray-400 text-xs leading-relaxed">{completedToday} tasks completed today. Keep crushing it!</p>
                                 </>
                             ) : (
                                 <>
-                                    <h3 className="text-lg font-bold mb-2">🎯 Stay Focused</h3>
-                                    <p className="text-gray-400 text-sm leading-relaxed">
-                                        "The secret of getting ahead is getting started." — Mark Twain
+                                    <h3 className="text-base font-bold mb-1">🎯 Stay Focused</h3>
+                                    <p className="text-gray-400 text-xs leading-relaxed">
+                                        &quot;The secret of getting ahead is getting started.&quot; — Mark Twain
                                     </p>
                                 </>
                             )}
-                            <div className="mt-4 flex gap-2">
-                                <span className="px-3 py-1 bg-white/10 rounded-full text-xs font-medium">
-                                    {streak >= 7 ? 'Consistency' : 'Motivation'}
+                            <div className="mt-3 flex gap-2">
+                                <span className="px-2.5 py-1 bg-white/10 rounded-full text-[10px] font-medium">
+                                    {streak >= 7 ? "Consistency" : "Motivation"}
                                 </span>
-                                <span className="px-3 py-1 bg-white/10 rounded-full text-xs font-medium">
-                                    {completedToday >= 3 ? 'Productive' : 'Focus'}
+                                <span className="px-2.5 py-1 bg-white/10 rounded-full text-[10px] font-medium">
+                                    {completedToday >= 3 ? "Productive" : "Focus"}
                                 </span>
                             </div>
                         </div>
-                    </motion.div>
-                </div>
+                    </div>
+                </motion.div>
             </div>
         </div>
     );
