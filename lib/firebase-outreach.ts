@@ -25,29 +25,104 @@ import {
 
 export * from './types/outreach';
 
-// Collection reference helpers
+// ─── Helpers ─────────────────────────────────────────────────────────
+
 const outreachCollection = (userId: string) => collection(db, 'users', userId, 'outreach_contacts');
 const hackathonsCollection = (userId: string) => collection(db, 'users', userId, 'hackathons');
+
+/**
+ * Removes undefined fields from an object to prevent Firestore errors.
+ * Firestore does not accept 'undefined' but accepts 'null' or omitted keys.
+ */
+function sanitizeData(data: any) {
+    const sanitized = { ...data };
+    Object.keys(sanitized).forEach(key => {
+        if (sanitized[key] === undefined) {
+            delete sanitized[key];
+        }
+    });
+    return sanitized;
+}
 
 // ─── Outreach Contacts ───────────────────────────────────────────────
 
 export async function createOutreachContact(userId: string, input: CreateOutreachInput): Promise<string> {
-    const contactData = {
+    const contactData: any = sanitizeData({
         ...input,
         status: input.status || 'contacted',
+        pipelineStage: input.pipelineStage || 'new',
+        activityLog: input.activityLog || [],
         followUpDone: false,
         userId,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
-    };
+    });
 
-    // Convert followUpDate to Timestamp if present
+    // Convert Date fields to Timestamps
     if (input.followUpDate) {
-        (contactData as any).followUpDate = Timestamp.fromDate(input.followUpDate);
+        contactData.followUpDate = Timestamp.fromDate(input.followUpDate);
+    }
+    if (input.meetingDate) {
+        contactData.meetingDate = Timestamp.fromDate(input.meetingDate);
     }
 
     const docRef = await addDoc(outreachCollection(userId), contactData);
     return docRef.id;
+}
+
+// Append an activity log entry to a contact
+export async function addActivityLogEntry(
+    userId: string,
+    contactId: string,
+    note: string
+): Promise<void> {
+    const contactRef = doc(db, 'users', userId, 'outreach_contacts', contactId);
+    const snap = await getDoc(contactRef);
+    if (!snap.exists()) return;
+    const existing = snap.data().activityLog || [];
+    existing.push({ date: new Date().toISOString(), note });
+    await updateDoc(contactRef, { activityLog: existing, updatedAt: Timestamp.now() });
+}
+
+// Convert a closed-won outreach contact into a client
+export async function convertToClient(
+    userId: string,
+    contactId: string
+): Promise<string> {
+    const contactRef = doc(db, 'users', userId, 'outreach_contacts', contactId);
+    const snap = await getDoc(contactRef);
+    if (!snap.exists()) throw new Error('Outreach contact not found');
+    const data = snap.data();
+
+    // Build client data from outreach contact
+    const clientData = sanitizeData({
+        name: data.contactPerson || data.businessName,
+        email: data.email || '',
+        phone: data.phone,
+        company: data.businessName,
+        address: data.address,
+        website: data.website,
+        status: 'Active',
+        tags: [data.category, data.program].filter(Boolean),
+        totalRevenue: 0,
+        notes: data.notes,
+        sourceOutreachId: contactId,
+        userId,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+    });
+
+    const clientsCol = collection(db, 'users', userId, 'clients');
+    const clientRef = await addDoc(clientsCol, clientData);
+
+    // Mark outreach contact as converted
+    await updateDoc(contactRef, {
+        status: 'converted',
+        pipelineStage: 'closed_won',
+        updatedAt: Timestamp.now(),
+    });
+
+    return clientRef.id;
 }
 
 export async function updateOutreachContact(
@@ -56,14 +131,17 @@ export async function updateOutreachContact(
     updates: Partial<OutreachContact>
 ): Promise<void> {
     const contactRef = doc(db, 'users', userId, 'outreach_contacts', contactId);
-    const updateData: any = {
+    const updateData: any = sanitizeData({
         ...updates,
         updatedAt: Timestamp.now(),
-    };
+    });
 
     // Convert Date fields to Timestamps
     if (updates.followUpDate) {
         updateData.followUpDate = Timestamp.fromDate(updates.followUpDate);
+    }
+    if (updates.meetingDate) {
+        updateData.meetingDate = Timestamp.fromDate(updates.meetingDate);
     }
 
     await updateDoc(contactRef, updateData);
@@ -84,6 +162,7 @@ export async function getOutreachContact(userId: string, contactId: string): Pro
         createdAt: snap.data().createdAt?.toDate(),
         updatedAt: snap.data().updatedAt?.toDate(),
         followUpDate: snap.data().followUpDate?.toDate(),
+        meetingDate: snap.data().meetingDate?.toDate(),
     } as OutreachContact;
 }
 
@@ -106,6 +185,7 @@ export function subscribeOutreachByProgram(
             createdAt: doc.data().createdAt?.toDate(),
             updatedAt: doc.data().updatedAt?.toDate(),
             followUpDate: doc.data().followUpDate?.toDate(),
+            meetingDate: doc.data().meetingDate?.toDate(),
         })) as OutreachContact[];
         callback(contacts);
     });
@@ -128,6 +208,7 @@ export function subscribeAllOutreach(
             createdAt: doc.data().createdAt?.toDate(),
             updatedAt: doc.data().updatedAt?.toDate(),
             followUpDate: doc.data().followUpDate?.toDate(),
+            meetingDate: doc.data().meetingDate?.toDate(),
         })) as OutreachContact[];
         callback(contacts);
     });
@@ -166,23 +247,47 @@ export function subscribeFollowUps(
             createdAt: doc.data().createdAt?.toDate(),
             updatedAt: doc.data().updatedAt?.toDate(),
             followUpDate: doc.data().followUpDate?.toDate(),
+            meetingDate: doc.data().meetingDate?.toDate(),
         })) as OutreachContact[];
         // Filter for contacts that have a followUpDate
         callback(contacts.filter(c => c.followUpDate));
     });
 }
 
+// Subscribe to contacts with meetings scheduled
+export function subscribeMeetings(
+    userId: string,
+    callback: (contacts: OutreachContact[]) => void
+): () => void {
+    const q = query(
+        outreachCollection(userId),
+        orderBy('meetingDate', 'asc')
+    );
+
+    return onSnapshot(q, (snapshot) => {
+        const contacts = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate(),
+            updatedAt: doc.data().updatedAt?.toDate(),
+            followUpDate: doc.data().followUpDate?.toDate(),
+            meetingDate: doc.data().meetingDate?.toDate(),
+        })) as OutreachContact[];
+        callback(contacts.filter(c => c.meetingDate));
+    });
+}
+
 // ─── Hackathons ──────────────────────────────────────────────────────
 
 export async function createHackathon(userId: string, input: CreateHackathonInput): Promise<string> {
-    const hackathonData: any = {
+    const hackathonData: any = sanitizeData({
         ...input,
         status: input.status || 'planned',
         ideas: input.ideas || [],
         userId,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
-    };
+    });
 
     // Convert Date fields
     if (input.startDate) hackathonData.startDate = Timestamp.fromDate(input.startDate);
@@ -199,10 +304,10 @@ export async function updateHackathon(
     updates: Partial<Hackathon>
 ): Promise<void> {
     const hackRef = doc(db, 'users', userId, 'hackathons', hackathonId);
-    const updateData: any = {
+    const updateData: any = sanitizeData({
         ...updates,
         updatedAt: Timestamp.now(),
-    };
+    });
 
     if (updates.startDate) updateData.startDate = Timestamp.fromDate(updates.startDate);
     if (updates.endDate) updateData.endDate = Timestamp.fromDate(updates.endDate);

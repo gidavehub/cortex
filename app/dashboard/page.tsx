@@ -22,8 +22,8 @@ import {
     TIER_CONFIG, Achievement
 } from "@/lib/types/achievement";
 import { OUTREACH_TARGETS } from "@/lib/types/outreach";
-import { subscribeAllOutreach, subscribeFollowUps } from "@/lib/firebase-outreach";
-import { OutreachContact } from "@/lib/types/outreach";
+import { subscribeAllOutreach, subscribeFollowUps, subscribeMeetings, subscribeHackathons } from "@/lib/firebase-outreach";
+import { OutreachContact, Hackathon } from "@/lib/types/outreach";
 import { cn } from "@/lib/utils";
 import {
     GoalRing, ActivityHeatmap, SkillRadar,
@@ -35,7 +35,9 @@ export default function DashboardPage() {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [loading, setLoading] = useState(true);
     const [outreachContacts, setOutreachContacts] = useState<OutreachContact[]>([]);
-    const [followUpCount, setFollowUpCount] = useState(0);
+    const [followUps, setFollowUps] = useState<OutreachContact[]>([]);
+    const [meetings, setMeetings] = useState<OutreachContact[]>([]);
+    const [hackathons, setHackathons] = useState<Hackathon[]>([]);
 
     // Time & Date
     const today = new Date();
@@ -70,8 +72,10 @@ export default function DashboardPage() {
     useEffect(() => {
         if (!user) return;
         const unsub1 = subscribeAllOutreach(user.uid, setOutreachContacts);
-        const unsub2 = subscribeFollowUps(user.uid, (items) => setFollowUpCount(items.length));
-        return () => { unsub1(); unsub2(); };
+        const unsub2 = subscribeFollowUps(user.uid, setFollowUps);
+        const unsub3 = subscribeMeetings(user.uid, setMeetings);
+        const unsub4 = subscribeHackathons(user.uid, setHackathons);
+        return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
     }, [user]);
 
     function getISOWeekString(date: Date): string {
@@ -158,6 +162,16 @@ export default function DashboardPage() {
                 case "streak_starter": return achieveStreak;
                 case "productive_week": return thisWeekDone.length;
                 case "goal_crusher": return tasks.filter(t => t.scope === "week" && t.status === "done").length > 0 ? 1 : 0;
+                case "outreach_champion": {
+                    // Count days this week that hit target
+                    const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd });
+                    return weekDays.filter(day => {
+                        const dayStr = format(day, "yyyy-MM-dd");
+                        const novaDone = outreachContacts.filter(c => c.program === "nova" && c.date === dayStr).length >= OUTREACH_TARGETS.nova.daily;
+                        const amakaDone = outreachContacts.filter(c => c.program === "amaka_ai" && c.date === dayStr).length >= OUTREACH_TARGETS.amaka_ai.daily;
+                        return novaDone || amakaDone;
+                    }).length;
+                }
                 default: return 0;
             }
         };
@@ -174,6 +188,13 @@ export default function DashboardPage() {
                     const wd = tasks.filter(t => t.deadline);
                     const md = wd.filter(t => t.status === "done" && t.deadline && t.updatedAt <= t.deadline);
                     return wd.length > 0 ? Math.round((md.length / wd.length) * 100) : 100;
+                case "networking_pro": {
+                    const monthContacts = outreachContacts.filter(c => {
+                        const d = parseISO(c.date);
+                        return isWithinInterval(d, { start: monthStart, end: monthEnd });
+                    });
+                    return monthContacts.length;
+                }
                 default: return 0;
             }
         };
@@ -213,7 +234,7 @@ export default function DashboardPage() {
         ];
 
         return { weeklyUnlocked, monthlyUnlocked, yearlyUnlocked, totalUnlocked, totalAchievements, totalXP, radarData };
-    }, [tasks, streak, weekProgress]);
+    }, [tasks, streak, weekProgress, outreachContacts]);
 
     // ── Activity heatmap data ──
     const heatmapData = useMemo(() => {
@@ -269,6 +290,66 @@ export default function DashboardPage() {
         const amakaToday = outreachContacts.filter(c => c.program === "amaka_ai" && c.date === todayStr).length;
         return { novaToday, amakaToday };
     }, [outreachContacts]);
+
+    // ── Virtual tasks for outreach/hackathon ──
+    const followUpCount = followUps.length;
+    type VirtualTask = { id: string; title: string; badge: string; badgeColor: string; linkTo: string; done: boolean };
+    const virtualTasks = useMemo<VirtualTask[]>(() => {
+        const items: VirtualTask[] = [];
+        const todayStr = format(today, "yyyy-MM-dd");
+
+        // Outreach targets
+        const novaToday = outreachContacts.filter(c => c.program === "nova" && c.date === todayStr).length;
+        const novaTarget = OUTREACH_TARGETS.nova.daily;
+        items.push({
+            id: "vt-nova", title: `Nova outreach (${novaToday}/${novaTarget})`,
+            badge: "📞 Outreach", badgeColor: "bg-blue-50 text-blue-600",
+            linkTo: "/dashboard/outreach", done: novaToday >= novaTarget,
+        });
+
+        const amakaToday = outreachContacts.filter(c => c.program === "amaka_ai" && c.date === todayStr).length;
+        const amakaTarget = OUTREACH_TARGETS.amaka_ai.daily;
+        items.push({
+            id: "vt-amaka", title: `Amaka AI outreach (${amakaToday}/${amakaTarget})`,
+            badge: "📞 Outreach", badgeColor: "bg-purple-50 text-purple-600",
+            linkTo: "/dashboard/outreach", done: amakaToday >= amakaTarget,
+        });
+
+        // Today's meetings
+        meetings.forEach(m => {
+            if (m.meetingDate && format(m.meetingDate, "yyyy-MM-dd") === todayStr) {
+                items.push({
+                    id: `vt-mtg-${m.id}`, title: `Meeting: ${m.businessName}${m.meetingTime ? ` @ ${m.meetingTime}` : ""}`,
+                    badge: "🤝 Meeting", badgeColor: "bg-teal-50 text-teal-600",
+                    linkTo: `/dashboard/outreach/${m.id}`, done: false,
+                });
+            }
+        });
+
+        // Today's follow-ups
+        followUps.forEach(f => {
+            if (f.followUpDate && format(f.followUpDate, "yyyy-MM-dd") === todayStr) {
+                items.push({
+                    id: `vt-fu-${f.id}`, title: `Follow up: ${f.businessName}`,
+                    badge: "🔔 Follow-up", badgeColor: "bg-amber-50 text-amber-600",
+                    linkTo: `/dashboard/outreach/${f.id}`, done: f.followUpDone,
+                });
+            }
+        });
+
+        // Pending hackathons
+        hackathons.forEach(h => {
+            if (h.status === "planned" || h.status === "in_progress") {
+                items.push({
+                    id: `vt-hack-${h.id}`, title: h.name,
+                    badge: "🏆 Hackathon", badgeColor: "bg-orange-50 text-orange-600",
+                    linkTo: "/dashboard/outreach", done: false,
+                });
+            }
+        });
+
+        return items;
+    }, [outreachContacts, meetings, followUps, hackathons]);
 
     // ── Next upcoming task ──
     const upcomingTask = todayTasks
@@ -596,6 +677,48 @@ export default function DashboardPage() {
                                     <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: task.color || TASK_COLORS[0] }} />
                                 </motion.div>
                             ))
+                        )}
+
+                        {/* Virtual tasks (outreach/hackathon/meetings) */}
+                        {virtualTasks.length > 0 && (
+                            <>
+                                {(todayTasks.length > 0) && (
+                                    <div className="flex items-center gap-2 pt-2">
+                                        <div className="flex-1 h-px bg-gray-100" />
+                                        <span className="text-[10px] text-gray-400 font-medium uppercase">Outreach & Others</span>
+                                        <div className="flex-1 h-px bg-gray-100" />
+                                    </div>
+                                )}
+                                {virtualTasks.map((vt, idx) => (
+                                    <Link key={vt.id} href={vt.linkTo}>
+                                        <motion.div
+                                            initial={{ opacity: 0, x: -10 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            transition={{ delay: 0.6 + idx * 0.03 }}
+                                            className={cn(
+                                                "flex items-center gap-3 p-3 rounded-xl border transition-all",
+                                                vt.done
+                                                    ? "bg-gray-50 border-gray-100"
+                                                    : "bg-white border-gray-100 hover:border-gray-200 hover:shadow-sm"
+                                            )}
+                                        >
+                                            <div className={cn(
+                                                "w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0",
+                                                vt.done ? "bg-green-500 border-green-500" : "border-gray-300"
+                                            )}>
+                                                {vt.done && <CheckCircle2 className="w-3 h-3 text-white" />}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className={cn(
+                                                    "text-sm font-medium truncate",
+                                                    vt.done ? "text-gray-400 line-through" : "text-gray-900"
+                                                )}>{vt.title}</p>
+                                                <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded-md", vt.badgeColor)}>{vt.badge}</span>
+                                            </div>
+                                        </motion.div>
+                                    </Link>
+                                ))}
+                            </>
                         )}
                     </div>
                 </motion.div>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Phone, Mail, MapPin, Globe, MessageCircle, Plus, Calendar } from "lucide-react";
+import { X, Phone, Mail, MapPin, Globe, MessageCircle, Plus, Calendar, Clock, Loader2 } from "lucide-react";
 import {
     OutreachProgram,
     OutreachChannel,
@@ -19,7 +19,7 @@ import { format } from "date-fns";
 interface OutreachModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSave: (input: CreateOutreachInput) => void;
+    onSave: (input: CreateOutreachInput) => Promise<void>;
     editContact?: OutreachContact | null;
     defaultProgram?: OutreachProgram;
 }
@@ -51,10 +51,16 @@ export function OutreachModal({ isOpen, onClose, onSave, editContact, defaultPro
     const [followUpDate, setFollowUpDate] = useState(
         editContact?.followUpDate ? format(editContact.followUpDate, "yyyy-MM-dd") : format(new Date(Date.now() + 86400000), "yyyy-MM-dd")
     );
+    const [enableMeeting, setEnableMeeting] = useState(!!editContact?.meetingDate);
+    const [meetingDate, setMeetingDate] = useState(
+        editContact?.meetingDate ? format(editContact.meetingDate, "yyyy-MM-dd") : format(new Date(Date.now() + 86400000), "yyyy-MM-dd")
+    );
+    const [meetingTime, setMeetingTime] = useState(editContact?.meetingTime || "10:00");
+    const [saving, setSaving] = useState(false);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!businessName.trim()) return;
+        if (!businessName.trim() || saving) return;
 
         const input: CreateOutreachInput = {
             program,
@@ -71,10 +77,19 @@ export function OutreachModal({ isOpen, onClose, onSave, editContact, defaultPro
             status,
             date: editContact?.date || format(new Date(), "yyyy-MM-dd"),
             followUpDate: enableFollowUp ? new Date(followUpDate) : undefined,
+            meetingDate: enableMeeting ? new Date(meetingDate) : undefined,
+            meetingTime: enableMeeting ? meetingTime : undefined,
         };
 
-        onSave(input);
-        handleClose();
+        setSaving(true);
+        try {
+            await onSave(input);
+            handleClose();
+        } catch (err) {
+            console.error("Failed to save outreach:", err);
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleClose = () => {
@@ -90,6 +105,7 @@ export function OutreachModal({ isOpen, onClose, onSave, editContact, defaultPro
         setNotes("");
         setStatus("contacted");
         setEnableFollowUp(false);
+        setEnableMeeting(false);
         onClose();
     };
 
@@ -337,16 +353,51 @@ export function OutreachModal({ isOpen, onClose, onSave, editContact, defaultPro
                             </div>
                         </div>
 
+                        {/* Book Meeting Toggle */}
+                        <div className="flex items-center justify-between bg-blue-50/50 rounded-xl px-4 py-3 border border-blue-100">
+                            <div className="flex items-center gap-2">
+                                <Clock className="w-4 h-4 text-blue-600" />
+                                <span className="text-sm font-medium text-blue-800">Book meeting</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                {enableMeeting && (
+                                    <>
+                                        <input
+                                            type="date"
+                                            value={meetingDate}
+                                            onChange={(e) => setMeetingDate(e.target.value)}
+                                            className="px-2 py-1 text-xs bg-white border border-blue-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20"
+                                        />
+                                        <input
+                                            type="time"
+                                            value={meetingTime}
+                                            onChange={(e) => setMeetingTime(e.target.value)}
+                                            className="px-2 py-1 text-xs bg-white border border-blue-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20"
+                                        />
+                                    </>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setEnableMeeting(!enableMeeting)}
+                                    className={`w-10 h-6 rounded-full transition-all relative ${enableMeeting ? "bg-blue-500" : "bg-gray-200"}`}
+                                >
+                                    <div className={`w-4 h-4 rounded-full bg-white shadow-sm absolute top-1 transition-all ${enableMeeting ? "left-5" : "left-1"}`} />
+                                </button>
+                            </div>
+                        </div>
+
                         {/* Submit */}
                         <div className="pt-2 pb-2">
                             <button
                                 type="submit"
-                                className={`w-full py-3 rounded-xl text-white font-medium transition-all shadow-lg ${program === "nova"
+                                disabled={saving}
+                                className={`w-full py-3 rounded-xl text-white font-medium transition-all shadow-lg flex items-center justify-center gap-2 ${saving ? "opacity-70 cursor-not-allowed" : ""} ${program === "nova"
                                     ? "bg-blue-600 hover:bg-blue-700 shadow-blue-500/30"
                                     : "bg-purple-600 hover:bg-purple-700 shadow-purple-500/30"
                                     }`}
                             >
-                                {editContact ? "Update Outreach" : "Log Outreach"}
+                                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                                {saving ? "Saving..." : editContact ? "Update Outreach" : "Log Outreach"}
                             </button>
                         </div>
                     </form>

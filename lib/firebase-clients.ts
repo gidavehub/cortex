@@ -21,16 +21,24 @@ export * from './types/client';
 // Collection reference helper
 const clientsCollection = (userId: string) => collection(db, 'users', userId, 'clients');
 
+function sanitizeData(data: any) {
+    const sanitized = { ...data };
+    Object.keys(sanitized).forEach(key => {
+        if (sanitized[key] === undefined) delete sanitized[key];
+    });
+    return sanitized;
+}
+
 // Create a new client
 export async function createClient(userId: string, input: CreateClientInput): Promise<string> {
-    const clientData = {
+    const clientData = sanitizeData({
         ...input,
         totalRevenue: 0,
         tags: input.tags || [],
         userId,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
-    };
+    });
 
     const docRef = await addDoc(clientsCollection(userId), clientData);
     return docRef.id;
@@ -43,10 +51,10 @@ export async function updateClient(
     updates: Partial<Client>
 ): Promise<void> {
     const clientRef = doc(db, 'users', userId, 'clients', clientId);
-    await updateDoc(clientRef, {
+    await updateDoc(clientRef, sanitizeData({
         ...updates,
         updatedAt: Timestamp.now(),
-    });
+    }));
 }
 
 // Delete a client

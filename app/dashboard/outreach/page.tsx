@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -19,6 +20,7 @@ import {
     MoreHorizontal,
     X,
     ArrowUpDown,
+    Clock,
 } from "lucide-react";
 import { format } from "date-fns";
 import {
@@ -34,6 +36,7 @@ import {
     CATEGORY_CONFIG,
     STATUS_CONFIG,
     OUTREACH_TARGETS,
+    PIPELINE_STAGES,
     subscribeAllOutreach,
     subscribeFollowUps,
     subscribeHackathons,
@@ -58,6 +61,7 @@ const tabs: { key: TabKey; label: string; color: string; gradient: string }[] = 
 
 export default function OutreachPage() {
     const { user } = useAuth();
+    const router = useRouter();
     const [contacts, setContacts] = useState<OutreachContact[]>([]);
     const [followUps, setFollowUps] = useState<OutreachContact[]>([]);
     const [hackathons, setHackathons] = useState<Hackathon[]>([]);
@@ -192,8 +196,8 @@ export default function OutreachPage() {
                         key={tab.key}
                         onClick={() => setActiveTab(tab.key)}
                         className={`relative px-5 py-2 rounded-xl text-sm font-medium transition-all ${activeTab === tab.key
-                                ? "text-white shadow-lg"
-                                : "text-gray-500 hover:text-gray-700"
+                            ? "text-white shadow-lg"
+                            : "text-gray-500 hover:text-gray-700"
                             }`}
                     >
                         {activeTab === tab.key && (
@@ -269,8 +273,8 @@ export default function OutreachPage() {
                         <button
                             onClick={() => setShowFilters(!showFilters)}
                             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-colors ${hasActiveFilters
-                                    ? "bg-blue-50 text-blue-600"
-                                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                                ? "bg-blue-50 text-blue-600"
+                                : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
                                 }`}
                         >
                             <Filter className="w-3.5 h-3.5" />
@@ -289,8 +293,8 @@ export default function OutreachPage() {
                                 setShowModal(true);
                             }}
                             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-medium text-white transition-all shadow-sm ${activeTab === "nova"
-                                    ? "bg-blue-600 hover:bg-blue-700 shadow-blue-500/20"
-                                    : "bg-purple-600 hover:bg-purple-700 shadow-purple-500/20"
+                                ? "bg-blue-600 hover:bg-blue-700 shadow-blue-500/20"
+                                : "bg-purple-600 hover:bg-purple-700 shadow-purple-500/20"
                                 }`}
                         >
                             <Plus className="w-3.5 h-3.5" />
@@ -406,8 +410,9 @@ export default function OutreachPage() {
                                                     animate={{ opacity: 1 }}
                                                     exit={{ opacity: 0 }}
                                                     transition={{ delay: i * 0.02 }}
-                                                    className="border-t border-gray-50 hover:bg-gray-50/50 transition-colors group"
+                                                    className="border-t border-gray-50 hover:bg-blue-50/40 transition-colors group cursor-pointer"
                                                     onContextMenu={(e) => handleContextMenu(e, contact)}
+                                                    onClick={() => router.push(`/dashboard/outreach/${contact.id}`)}
                                                 >
                                                     <td className="px-5 py-3.5">
                                                         <div className="flex items-center gap-3">
@@ -480,6 +485,17 @@ export default function OutreachPage() {
                                                         >
                                                             {statusConf.label}
                                                         </span>
+                                                        {contact.pipelineStage && (() => {
+                                                            const ps = PIPELINE_STAGES.find(s => s.key === contact.pipelineStage);
+                                                            return ps ? (
+                                                                <span
+                                                                    className="text-[10px] font-medium px-1.5 py-0.5 rounded-md mt-0.5 inline-block"
+                                                                    style={{ backgroundColor: ps.bgColor, color: ps.color }}
+                                                                >
+                                                                    {ps.label}
+                                                                </span>
+                                                            ) : null;
+                                                        })()}
                                                     </td>
                                                     <td className="px-3 py-3.5">
                                                         <div className="text-xs text-gray-500">{contact.date}</div>
@@ -487,6 +503,12 @@ export default function OutreachPage() {
                                                             <div className="text-[10px] text-amber-600 mt-0.5 flex items-center gap-0.5">
                                                                 <Bell className="w-3 h-3" />
                                                                 Follow up: {format(contact.followUpDate, "MMM d")}
+                                                            </div>
+                                                        )}
+                                                        {contact.meetingDate && (
+                                                            <div className="text-[10px] text-blue-600 mt-0.5 flex items-center gap-0.5">
+                                                                <Clock className="w-3 h-3" />
+                                                                Meeting: {format(contact.meetingDate, "MMM d")}{contact.meetingTime ? ` at ${contact.meetingTime}` : ""}
                                                             </div>
                                                         )}
                                                     </td>

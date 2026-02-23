@@ -54,6 +54,15 @@ export const WEEKLY_ACHIEVEMENTS: Achievement[] = [
         requirement: 1,
         rewardXP: 100,
     },
+    {
+        id: 'outreach_champion',
+        name: 'Outreach Champion',
+        description: 'Hit daily outreach target 5 days',
+        icon: '📞',
+        tier: 'weekly',
+        requirement: 5,
+        rewardXP: 75,
+    },
 ];
 
 // Monthly Achievements (5)
@@ -102,6 +111,15 @@ export const MONTHLY_ACHIEVEMENTS: Achievement[] = [
         tier: 'monthly',
         requirement: 100, // percentage
         rewardXP: 200,
+    },
+    {
+        id: 'networking_pro',
+        name: 'Networking Pro',
+        description: 'Log 100+ outreach contacts',
+        icon: '🤝',
+        tier: 'monthly',
+        requirement: 100,
+        rewardXP: 250,
     },
 ];
 

@@ -17,6 +17,7 @@ export interface Client {
     totalRevenue: number;
     notes?: string;
     website?: string;
+    sourceOutreachId?: string; // links back to the outreach contact that became this client
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -31,6 +32,7 @@ export interface CreateClientInput {
     tags?: string[];
     website?: string;
     notes?: string;
+    sourceOutreachId?: string;
 }
 
 export interface ClientProject {

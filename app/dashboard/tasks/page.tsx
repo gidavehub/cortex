@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { Plus, Search, Filter, CheckCircle2, Clock, Calendar, Layers, TrendingUp, Target, MoreHorizontal, Trash2, Edit } from "lucide-react";
+import { Plus, Search, Filter, CheckCircle2, Clock, Calendar, Layers, TrendingUp, Target, MoreHorizontal, Trash2, Edit, Megaphone, Users, Bell } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -13,6 +13,7 @@ import { Task, TaskScope, TASK_COLORS } from "@/lib/types/task";
 import { TaskModal } from "@/components/tasks/TaskModal";
 import { createTask, updateTask } from "@/lib/firebase-tasks";
 import { cn } from "@/lib/utils";
+import { subscribeMeetings, subscribeFollowUps, OutreachContact } from "@/lib/firebase-outreach";
 
 const SCOPE_CONFIG = {
     day: { label: 'Daily', icon: Clock, color: 'blue' },
@@ -27,6 +28,7 @@ type FilterStatus = 'all' | 'pending' | 'in-progress' | 'done';
 
 export default function TasksPage() {
     const { user } = useAuth();
+    const router = useRouter();
     const [tasks, setTasks] = useState<Task[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
@@ -35,6 +37,8 @@ export default function TasksPage() {
     const [showModal, setShowModal] = useState(false);
     const [selectedTask, setSelectedTask] = useState<Task | null>(null);
     const [contextMenu, setContextMenu] = useState<{ task: Task; x: number; y: number } | null>(null);
+    const [meetingContacts, setMeetingContacts] = useState<OutreachContact[]>([]);
+    const [followUpContacts, setFollowUpContacts] = useState<OutreachContact[]>([]);
 
     // Fetch all tasks
     useEffect(() => {
@@ -57,6 +61,14 @@ export default function TasksPage() {
         });
 
         return () => unsubscribe();
+    }, [user]);
+
+    // Fetch outreach meetings and follow-ups
+    useEffect(() => {
+        if (!user) return;
+        const unsub1 = subscribeMeetings(user.uid, setMeetingContacts);
+        const unsub2 = subscribeFollowUps(user.uid, setFollowUpContacts);
+        return () => { unsub1(); unsub2(); };
     }, [user]);
 
     // Filter tasks
@@ -225,66 +237,154 @@ export default function TasksPage() {
                         Create Task
                     </button>
                 </motion.div>
-            ) : filterScope === 'all' ? (
-                // Grouped view
-                <div className="space-y-8">
-                    {(Object.keys(groupedTasks) as TaskScope[]).map(scope => {
-                        const scopeTasks = groupedTasks[scope];
-                        if (scopeTasks.length === 0) return null;
-
-                        const config = SCOPE_CONFIG[scope];
-                        const Icon = config.icon;
-
-                        return (
-                            <motion.div
-                                key={scope}
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                            >
-                                <div className="flex items-center gap-3 mb-4">
-                                    <div className={`w-8 h-8 rounded-lg bg-${config.color}-100 flex items-center justify-center`}>
-                                        <Icon className={`w-4 h-4 text-${config.color}-500`} />
-                                    </div>
-                                    <h2 className="text-lg font-semibold text-gray-900">{config.label} Tasks</h2>
-                                    <span className="text-sm text-gray-400">{scopeTasks.length}</span>
-                                </div>
-
-                                <div className="grid gap-3">
-                                    {scopeTasks.map((task, idx) => (
-                                        <TaskRow
-                                            key={task.id}
-                                            task={task}
-                                            index={idx}
-                                            onContextMenu={handleContextMenu}
-                                            onToggle={handleToggleStatus}
-                                            onEdit={() => {
-                                                setSelectedTask(task);
-                                                setShowModal(true);
-                                            }}
-                                        />
-                                    ))}
-                                </div>
-                            </motion.div>
-                        );
-                    })}
-                </div>
             ) : (
-                // Flat list
-                <div className="grid gap-3">
-                    {filteredTasks.map((task, idx) => (
-                        <TaskRow
-                            key={task.id}
-                            task={task}
-                            index={idx}
-                            onContextMenu={handleContextMenu}
-                            onToggle={handleToggleStatus}
-                            onEdit={() => {
-                                setSelectedTask(task);
-                                setShowModal(true);
-                            }}
-                        />
-                    ))}
-                </div>
+                <>
+                    {/* ── Outreach Meetings & Follow-ups Section ── */}
+                    {(meetingContacts.length > 0 || followUpContacts.length > 0) && (
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="space-y-4"
+                        >
+                            {meetingContacts.length > 0 && (
+                                <div>
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
+                                            <Users className="w-4 h-4 text-indigo-500" />
+                                        </div>
+                                        <h2 className="text-lg font-semibold text-gray-900">Scheduled Meetings</h2>
+                                        <span className="text-sm text-gray-400">{meetingContacts.length}</span>
+                                    </div>
+                                    <div className="grid gap-2">
+                                        {meetingContacts.map((c, idx) => (
+                                            <motion.div
+                                                key={`meeting-${c.id}`}
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ delay: idx * 0.03 }}
+                                                className="flex items-center gap-4 p-4 bg-white rounded-2xl border border-indigo-100 hover:border-indigo-200 hover:shadow-md transition-all cursor-pointer"
+                                                onClick={() => router.push(`/dashboard/outreach/${c.id}`)}
+                                            >
+                                                <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                                                    <Users className="w-3.5 h-3.5 text-indigo-500" />
+                                                </div>
+                                                <div className="w-1 h-10 rounded-full bg-indigo-400 flex-shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="font-medium text-gray-900 truncate">Meeting: {c.businessName}</p>
+                                                    <p className="text-xs text-gray-500 mt-0.5">
+                                                        {c.contactPerson && `${c.contactPerson} · `}
+                                                        {c.meetingDate ? format(c.meetingDate, "MMM d, yyyy") : "Date TBD"}
+                                                        {c.meetingTime ? ` at ${c.meetingTime}` : ""}
+                                                    </p>
+                                                </div>
+                                                <span className="px-2 py-1 rounded-lg text-[11px] font-medium bg-indigo-50 text-indigo-600">Meeting Set</span>
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {followUpContacts.length > 0 && (
+                                <div>
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
+                                            <Bell className="w-4 h-4 text-amber-500" />
+                                        </div>
+                                        <h2 className="text-lg font-semibold text-gray-900">Follow-ups Due</h2>
+                                        <span className="text-sm text-gray-400">{followUpContacts.length}</span>
+                                    </div>
+                                    <div className="grid gap-2">
+                                        {followUpContacts.map((c, idx) => (
+                                            <motion.div
+                                                key={`followup-${c.id}`}
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ delay: idx * 0.03 }}
+                                                className="flex items-center gap-4 p-4 bg-white rounded-2xl border border-amber-100 hover:border-amber-200 hover:shadow-md transition-all cursor-pointer"
+                                                onClick={() => router.push(`/dashboard/outreach/${c.id}`)}
+                                            >
+                                                <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                                                    <Bell className="w-3.5 h-3.5 text-amber-500" />
+                                                </div>
+                                                <div className="w-1 h-10 rounded-full bg-amber-400 flex-shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="font-medium text-gray-900 truncate">Follow up: {c.businessName}</p>
+                                                    <p className="text-xs text-gray-500 mt-0.5">
+                                                        {c.contactPerson && `${c.contactPerson} · `}
+                                                        {c.followUpDate ? format(c.followUpDate, "MMM d, yyyy") : ""}
+                                                    </p>
+                                                </div>
+                                                <span className="px-2 py-1 rounded-lg text-[11px] font-medium bg-amber-50 text-amber-600">Follow Up</span>
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </motion.div>
+                    )}
+
+                    {/* ── Regular Task List ── */}
+                    {filterScope === 'all' ? (
+                        // Grouped view
+                        <div className="space-y-8">
+                            {(Object.keys(groupedTasks) as TaskScope[]).map(scope => {
+                                const scopeTasks = groupedTasks[scope];
+                                if (scopeTasks.length === 0) return null;
+
+                                const config = SCOPE_CONFIG[scope];
+                                const Icon = config.icon;
+
+                                return (
+                                    <motion.div
+                                        key={scope}
+                                        initial={{ opacity: 0, y: 20 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                    >
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className={`w-8 h-8 rounded-lg bg-${config.color}-100 flex items-center justify-center`}>
+                                                <Icon className={`w-4 h-4 text-${config.color}-500`} />
+                                            </div>
+                                            <h2 className="text-lg font-semibold text-gray-900">{config.label} Tasks</h2>
+                                            <span className="text-sm text-gray-400">{scopeTasks.length}</span>
+                                        </div>
+
+                                        <div className="grid gap-3">
+                                            {scopeTasks.map((task, idx) => (
+                                                <TaskRow
+                                                    key={task.id}
+                                                    task={task}
+                                                    index={idx}
+                                                    onContextMenu={handleContextMenu}
+                                                    onToggle={handleToggleStatus}
+                                                    onEdit={() => {
+                                                        setSelectedTask(task);
+                                                        setShowModal(true);
+                                                    }}
+                                                />
+                                            ))}
+                                        </div>
+                                    </motion.div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        // Flat list
+                        <div className="grid gap-3">
+                            {filteredTasks.map((task, idx) => (
+                                <TaskRow
+                                    key={task.id}
+                                    task={task}
+                                    index={idx}
+                                    onContextMenu={handleContextMenu}
+                                    onToggle={handleToggleStatus}
+                                    onEdit={() => {
+                                        setSelectedTask(task);
+                                        setShowModal(true);
+                                    }}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </>
             )}
 
             {/* Context Menu */}
